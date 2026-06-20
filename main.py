@@ -8,7 +8,10 @@ import os
 app = FastAPI(title="FeztNova EliteTrader", version="3.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# In-memory state (updated via POST from local engine)
+# ═══════════════════════════════════════════════════════════════
+#  In-memory state (updated via POST from local engine)
+# ═══════════════════════════════════════════════════════════════
+
 _state = {
     "active": False,
     "mode": "paper",
@@ -28,6 +31,12 @@ _state = {
         "reason": "Waiting for data sync...",
     },
 }
+
+# ═══════════════════════════════════════════════════════════════
+#  TradingView Bridge — Alert store
+# ═══════════════════════════════════════════════════════════════
+
+_tv_alerts: list[dict] = []
 
 
 @app.get("/api/health")
@@ -51,6 +60,77 @@ async def sync_state(request: Request):
 @app.get("/api/state")
 def get_state():
     return _state
+
+
+# ═══════════════════════════════════════════════════════════════
+#  TRADINGVIEW BRIDGE — Public webhook receiver
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/api/tv-webhook")
+async def tv_webhook(request: Request):
+    """Receive TradingView alerts — use this URL in your Pine Script."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    symbol = body.get("symbol") or body.get("ticker") or "XAUUSD"
+    price = body.get("price") or body.get("close") or 0
+    action = body.get("action") or body.get("signal") or body.get("side") or "alert"
+    message = body.get("message") or body.get("text") or ""
+    timeframe = body.get("timeframe") or body.get("tf") or ""
+
+    alert_type = "info"
+    al = str(action).lower()
+    if any(w in al for w in ("buy", "long", "entry")):
+        alert_type = "buy"
+    elif any(w in al for w in ("sell", "short", "exit")):
+        alert_type = "sell"
+    elif any(w in al for w in ("tp", "take profit", "target")):
+        alert_type = "tp"
+    elif any(w in al for w in ("sl", "stop", "loss")):
+        alert_type = "sl"
+
+    alert = {
+        "id": datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")[:16],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "symbol": str(symbol),
+        "price": float(price) if price else 0,
+        "action": str(action),
+        "message": str(message),
+        "timeframe": str(timeframe),
+        "type": alert_type,
+    }
+
+    _tv_alerts.append(alert)
+    # Keep last 500
+    if len(_tv_alerts) > 500:
+        _tv_alerts[:] = _tv_alerts[-500:]
+
+    return {"status": "ok", "alert": alert}
+
+
+@app.get("/api/tv-alerts")
+def api_tv_alerts(limit: int = 20):
+    """Get TradingView alert log."""
+    return _tv_alerts[-limit:]
+
+
+@app.get("/api/tv-bridge/status")
+def api_tv_bridge_status():
+    """Bridge health — use this in TradingView to verify connectivity."""
+    recent = _tv_alerts[-50:]
+    return {
+        "connected": True,
+        "total_alerts": len(_tv_alerts),
+        "last_alert": _tv_alerts[-1] if _tv_alerts else None,
+        "recent_50": {
+            "buy": sum(1 for a in recent if a.get("type") == "buy"),
+            "sell": sum(1 for a in recent if a.get("type") == "sell"),
+            "other": len(recent) - sum(1 for a in recent if a.get("type") in ("buy", "sell")),
+        },
+        "webhook_url": "https://web-production-9d88a.up.railway.app/api/tv-webhook",
+    }
 
 
 @app.get("/", response_class=HTMLResponse)
