@@ -330,7 +330,7 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
 
   <div class="engine-note">
     Connect your local engine:<br>
-    <code>curl -X POST YOUR_RAILWAY_URL/api/sync -H 'Content-Type: application/json' -d '{"active":true,"trading_mode":"sniper",...}'</code>
+    <code>curl -X POST https://web-production-9d88a.up.railway.app/api/sync -H 'Content-Type: application/json' -d '{"active":true,"trading_mode":"sniper",...}'</code>
   </div>
 
   <footer>
